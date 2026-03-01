@@ -1,5 +1,4 @@
-#Gemini version 36
-
+#Gemini version 36.
 import os, json, time, subprocess, re, requests, zipfile, io
 from pathlib import Path
 
