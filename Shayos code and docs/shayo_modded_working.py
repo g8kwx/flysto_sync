@@ -8,7 +8,7 @@ import zipfile
 import io
 from pathlib import Path
 from typing import List, Dict, Optional
-from lcd_helper import LCDDisplay
+from lcd_helper_old import LCDDisplay
 import threading
 
 # Configuration
@@ -234,69 +234,89 @@ class SyncOrchestrator:
         time.sleep(2)
         os.system("sudo reboot")
 
-    def run_sync_cycle(self):
-        """The core sync logic logic."""
+def run_sync_cycle(self):
         self.is_running = True
         self.manual_sync_requested = False
-        self.config = self.load_config() # Refresh config in case user edited it via web
-
+        os.system("pinctrl set 11 op dh") # Turn off "Complete" LED
+        
         try:
-            print(f"Starting Cycle {self.cycle_counter}")
-            self.lcd.update_status("SCANNING", f"Cycle {self.cycle_counter}")
-            available_networks = self.wifi.scan_networks()
+            self.lcd.update_status("SYNC", "Scanning...")
+            available = self.wifi.scan_networks()
+            fa_ssid = self.config['flashair_wifi_ssid']
 
-            # --- Phase 1: FlashAir ---
-            if self.config['flashair_wifi_ssid'] in available_networks:
-                self.lcd.update_status("WIFI", "Connecting FlashAir")
-                if self.wifi.force_connect(self.config['flashair_wifi_ssid'], self.config['flashair_wifi_password']):
+            # --- PHASE 1: FlashAir ---
+            if fa_ssid in available:
+                self.lcd.update_status("FA", "Connecting...")
+                if self.wifi.force_connect(fa_ssid, self.config['flashair_wifi_password']):
                     
-                    self.lcd.update_status("FLASHAIR", "Listing files...")
-                    fa_client = FlashAirClient(self.config['flashair_ip'])
-                    files = fa_client.list_files(self.config['flashair_data_log_dir'])
+                    # 1. ESSENTIAL: Longer wait for DHCP and Routing to settle
+                    # The Pi Zero needs a moment to drop the old IP and grab the 192.168.x.x one.
+                    time.sleep(6) 
                     
-                    to_download = [f for f in files if not f['is_directory'] and not self.local_db.is_recorded(f['filename'])]
+                    fa = FlashAirClient(self.config['flashair_ip'])
                     
-                    for i, f_info in enumerate(to_download):
-                        fname = f_info['filename']
-                        progress = (i + 1) / len(to_download)
-                        self.lcd.update_status("DOWNLOADING", fname, progress)
-                        
-                        remote = f"{self.config['flashair_data_log_dir']}/{fname}"
-                        local = Path(self.config['local_repo_path']) / fname
-                        if fa_client.download_file(remote, str(local)):
-                            self.local_db.mark_done(fname, {"size": f_info['size'], "date": f_info['date']})
-            
-            # --- Phase 2: Internet/FlySto ---
-            local_files = list(Path(self.config['local_repo_path']).glob('*.csv'))
-            pending = [f for f in local_files if not self.flysto_db.is_recorded(f.name)]
-            if len(pending) > 0:
+                    # 2. DEBUG: Try to list files
+                    print(f"[FA] Attempting list: {self.config['flashair_data_log_dir']}")
+                    files = fa.list_files(self.config['flashair_data_log_dir'])
+                    
+                    # 3. RETRY LOGIC: If the card is slow to wake up
+                    if not files:
+                        print("[FA] List empty. Retrying in 2s...")
+                        time.sleep(2)
+                        files = fa.list_files(self.config['flashair_data_log_dir'])
 
-                self.lcd.update_status("WIFI", "Internet?")
-                available_networks = self.wifi.scan_networks()
+                    to_dl = [f for f in files if not f['is_directory'] and not self.local_db.is_recorded(f['filename'])]
+                    
+                    if to_dl:
+                        for i, f in enumerate(to_dl):
+                            self.lcd.update_status("DL", f['filename'], (i+1)/len(to_dl))
+                            os.system("pinctrl set 9 op dl") # LED ON
+                            
+                            # Build path carefully: Ensure exactly one slash between dir and filename
+                            remote_path = f"{self.config['flashair_data_log_dir'].rstrip('/')}/{f['filename'].lstrip('/')}"
+                            
+                            success = fa.download_file(
+                                remote_path, 
+                                str(Path(self.config['local_repo_path']) / f['filename'])
+                            )
+                            
+                            if success:
+                                self.local_db.mark_done(f['filename'])
+                                os.system("pinctrl set 9 op dh") # LED OFF
+                            else:
+                                # Error Blink
+                                for _ in range(3):
+                                    os.system("pinctrl set 9 op dh"); time.sleep(0.1)
+                                    os.system("pinctrl set 9 op dl"); time.sleep(0.1)
+                                os.system("pinctrl set 9 op dh")
+                    else:
+                        print("[FA] No new files found.")
+
+            # --- PHASE 2: Internet / FlySto ---
+            # We refresh the scan to make sure we see current internet APs
+            pending = [f for f in Path(self.config['local_repo_path']).glob('*.csv') if not self.flysto_db.is_recorded(f.name)]
             
-                if self.wifi.connect_to_any_internet(available_networks):
-                    self.lcd.update_status("FLYSTO", "Syncing")
-                    flysto = FlyStoClient(self.config['flysto_email'], self.config['flysto_password'])
-                
-                    for i, file_path in enumerate(pending):
-                        progress = (i + 1) / len(pending)
-                        self.lcd.update_status("UPLOADING", file_path.name, progress)
-                        if flysto.upload_log(file_path):
-                            self.flysto_db.mark_done(file_path.name)
-                
-                    self.lcd.update_status("COMPLETE", f"Uploaded {len(pending)} files")
-                    time.sleep(5)
-                else:
-                    self.lcd.update_status("ERROR", "No Internet found")
-                    time.sleep(3)
+            if pending:
+                # Refresh scan before internet phase
+                available_now = self.wifi.scan_networks()
+                if self.wifi.connect_to_any_internet(available_now):
+                    os.system("pinctrl set 10 op dl") # Internet LED ON
+                    time.sleep(5) # Wait for internet routing to settle
+                    try:
+                        flysto = FlyStoClient(self.config['flysto_email'], self.config['flysto_password'])
+                        for i, f in enumerate(pending):
+                            self.lcd.update_status("UP", f.name, (i+1)/len(pending))
+                            if flysto.upload_log(f):
+                                self.flysto_db.mark_done(f.name)
+                    finally:
+                        os.system("pinctrl set 10 op dh")
+
+            # --- FINISH ---
+            os.system("pinctrl set 11 op dl") # Complete LED ON
 
         except Exception as e:
-            print(f"Orchestrator Error: {e}")
-            self.lcd.update_status("CRASH", str(e)[:40])
-            time.sleep(5)
-        
+            print(f"Sync Cycle Error: {e}")
         finally:
-            self.lcd.clear()
             self.is_running = False
 
     def get_uptime_str(self):
