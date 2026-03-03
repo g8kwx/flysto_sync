@@ -1,21 +1,31 @@
 {
     "flashair_ip": "http://192.168.0.1",
-    "flashair_data_log_dir": "/data_log",
-    "local_repo_path": "/home/syncer/flashair/mirror",
-    "local_db_path": "/home/syncer/flashair/local_sync.json",
-    "flysto_db_path": "/home/syncer/flashair/flysto_uploads.json",
+    "flashair_data_log_dir": "/data_log/",
+    "local_repo_path": "/home/admin/flashair/mirror",
+    "local_db_path": "/home/admin/flashair/local_sync.json",
+    "flysto_db_path": "/home/admin/flashair/flysto_uploads.json",
     "internet_networks": [
         {
-            "ssid": "SSD1",
-            "password": "password1"
+            "ssid": "S21",
+            "password": "12345678"
         },
         {
-            "ssid": "SSD2",
-            "password": "password2"
-        }
+            "ssid": "##?",
+            "password": "First0june22"
+        },
+        {
+            "ssid": "poohcorner.",
+            "password": "wm321895C"
+        },
+	
+	{
+	     "ssid":"Popham",
+	     "password":"spitfire"
+	}
+
     ],
-    "flashair_wifi_ssid": "flashair_ssid",
+    "flashair_wifi_ssid": "flashair_b86b230428d2",
     "flashair_wifi_password": "12345678",
-    "flysto_email": "your_email@gmail.com",
-    "flysto_password": "you_flysto_password",
+    "flysto_email": "peter@gclac.com",
+    "flysto_password": "h02032"
 }
