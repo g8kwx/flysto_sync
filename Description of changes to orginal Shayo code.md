@@ -1,4 +1,4 @@
-Gemini said
+Gemini said 
 Comparing the original version to v39, the script has evolved from a generic background automation tool into a specialized, hardware-integrated cockpit instrument.
 
 The primary theme of these changes is determinism: removing automatic "guessing" by the Pi and replacing it with manual pilot control and clear physical signaling.
