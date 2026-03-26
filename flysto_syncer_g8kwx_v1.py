@@ -1,5 +1,5 @@
-# Gemini version 39 - Final Cockpit Build
-# Manual Trigger Only | GPIO 11 fires on Login | Force WiFi Reset
+# Gemini version 39.2 - "Confirmed Receipt" Build
+# Manual Trigger | Radio Reset | GPIO 11 fires on Verified Server Upload
 import os, json, time, subprocess, re, requests, zipfile, io
 from pathlib import Path
 
@@ -63,6 +63,7 @@ class FlyStoClient:
         try:
             r = self._session.post(f"{self._base_url}/log-upload", params={"id": file_path.name}, 
                 headers={"Content-Type": "application/zip"}, data=buf.getvalue(), timeout=60)
+            # Returns True only if server confirms receipt (200, 201, or 204)
             return r.status_code in [200, 201, 204]
         except: return False
 
@@ -105,7 +106,6 @@ class SyncOrchestrator:
         log(f"Force connecting to {ssid}...")
         self.oled.update_status("WIFI", f"Join {ssid[:12]}")
         
-        # Aggressive reset for Pi Zero stability
         os.system(f"sudo nmcli connection delete '{ssid}' > /dev/null 2>&1")
         os.system("sudo ip link set wlan0 down")
         time.sleep(1)
@@ -113,7 +113,7 @@ class SyncOrchestrator:
         time.sleep(2)
 
         cmd = f"sudo nmcli device wifi connect '{ssid}' password '{password}' name '{ssid}'"
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=45)
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=50)
         
         if "successfully activated" in result.stdout.lower():
             log("WiFi connected. Waiting for IP...")
@@ -126,13 +126,24 @@ class SyncOrchestrator:
     def run_sync_cycle(self):
         if self.is_running: return
         self.is_running, self.manual_req = True, False
+       
+       # Turn on blue LED first before resetting the radio chip 
+        os.system("sudo pinctrl set 9 op dh") # Blue Busy ON
+        
+        #Reset counters
         dl_count, up_count = 0, 0
         
-        os.system("sudo pinctrl set 9 op dh") # Busy Alert ON
-        
+        # Radio Reset Sequence
+        os.system("sudo rfkill unblock wifi")
+        os.system("sudo nmcli radio wifi on")
+        os.system("sudo nmcli device wifi rescan > /dev/null 2>&1")
+        time.sleep(2) 
+                      
+              
         try:
             self.oled.update_status("SCAN", "Searching...")
-            scan = subprocess.getoutput("sudo iwlist wlan0 scan")
+            # Use nmcli for scanning as it is more robust when BT is disabled
+            scan = subprocess.getoutput("sudo nmcli device wifi list")
             
             # PHASE 1: FlashAir Harvesting
             fa_ssid = self.config['flashair_wifi_ssid']
@@ -160,44 +171,43 @@ class SyncOrchestrator:
             pending = [f for f in on_disk if f.name not in self.flysto_done]
             
             if pending:
-                # Find available internet network from config
                 net = next((n for n in self.config['internet_networks'] if n['ssid'] in scan), None)
                 if net and self.force_connect(net['ssid'], net['password']):
-                    os.system("sudo pinctrl set 10 op dh") # Net Transmission Alert ON
+                    os.system("sudo pinctrl set 10 op dh") # White LED ON
                     
                     client = FlyStoClient(self.config['flysto_email'], self.config['flysto_password'])
                     
                     if client.is_authenticated:
-                        # TRIGGER: Login Success Signal
-                        log("Internet Verified. Setting GPIO 11 HIGH.")
-                        os.system("sudo pinctrl set 11 op dh") 
-                        self.success_time = time.time() # Start 60s panel alert
-
                         for i, f in enumerate(pending):
                             self.oled.update_status("UP", f.name, (i+1)/len(pending))
                             if client.upload_log(f):
                                 self.flysto_done[f.name] = time.time()
                                 self._save_db(self.flysto_db_path, self.flysto_done)
                                 up_count += 1
+                        
+                        # GREEN TRIGGER: Only if at least one file was confirmed by server
+                        if up_count > 0:
+                            log(f"FlySto confirmed {up_count} files. Setting Green LED.")
+                            os.system("sudo pinctrl set 11 op dh") 
+                            self.success_time = time.time() 
                     
-                    os.system("sudo pinctrl set 10 op dl") # Net Alert OFF
+                    os.system("sudo pinctrl set 10 op dl") # White LED OFF
 
         except Exception as e:
             log(f"Sync Cycle Error: {e}")
         finally:
             self.is_running = False
-            os.system("sudo pinctrl set 9 op dl") # Busy Alert OFF
+            os.system("sudo pinctrl set 9 op dl") # Blue LED OFF
             os.system("sudo nmcli dev disconnect wlan0 > /dev/null 2>&1")
             self.oled.update_status("COMPLETE", f"DL:{dl_count} UP:{up_count}", force=True)
             time.sleep(5)
 
-    def start(self, interval=31536000): # Default to 1 year (Pure Manual)
-        last_sync = time.time()
+    def start(self):
         btn_start = None
         log("System Ready. Waiting for Button Press...")
 
         while True:
-            # Success Alert Timeout (60s)
+            # Green LED Success Timeout (60s)
             if self.success_time > 0 and (time.time() - self.success_time > 60):
                 os.system("sudo pinctrl set 11 op dl")
                 self.success_time = 0
@@ -220,7 +230,6 @@ class SyncOrchestrator:
 
             if self.manual_req:
                 self.run_sync_cycle()
-                last_sync = time.time()
             
             if not self.is_running:
                 self.oled.update_status("IDLE", f"Logs: {len(self.local_done)}")
