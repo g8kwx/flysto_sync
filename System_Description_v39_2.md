@@ -1,4 +1,4 @@
-This system, **FlySto Sync v39**, acts as a rugged, "on-demand" data bridge. It is specifically designed to transfer flight data logs from a Garmin avionics suite (via a FlashAir SD card) to the FlySto cloud platform using a Raspberry Pi Zero as the orchestrator.
+This system, **FlySto Sync v39.2**, acts as a rugged, "on-demand" data bridge. It is specifically designed to transfer flight data logs from a Garmin avionics suite (via a FlashAir SD card) to the FlySto cloud platform using a Raspberry Pi Zero as the orchestrator.
 
 ### 1. Hardware Interface Logic
 
@@ -31,7 +31,7 @@ When you press the button, the system executes the following sequence:
 * The Pi switches roles and scans for your **Internet Hotspot** (e.g., your S21 phone).
 * It performs another "aggressive" reset to force a connection to the hotspot.
 * **The Critical Moment:** The Pi attempts to log into the FlySto API.
-* **As soon as the login is authenticated, the Green LED (GPIO 11) turns ON.** This tells you immediately that your hotspot is working and the cloud is reachable.
+* **As soon as the login is authenticated, and a sucessful upload of at least one file the Green LED (GPIO 11) turns ON.** This tells you immediately that your hotspot is working and the upload is complete.
 
 #### **Step 3: Cloud Upload (White LED ON)**
 
@@ -52,4 +52,4 @@ When you press the button, the system executes the following sequence:
 * **Nuke-on-Connect:** By deleting the WiFi profile before every connection, the system avoids the "Security Property Missing" error that often plagues Pi Zeros when switching between different types of networks (WPA2 vs WPA3).
 * **Headless Recovery:** If the internet is not found or the login fails, the Green and White LEDs will remain off, and the Blue LED will extinguish after the attempt, allowing you to try again without rebooting.
 * **Persistence:** Every successful step is logged in JSON databases. If the battery dies mid-upload, the Pi knows exactly where it left off and won't download or upload duplicate data.
-
+* ** Reliability:** Its importat to diable bluetooth on the Pi sine the radio chip uses the same antenna for wifi and bt. Timing conflicts and partial download may be a problem is BT is on.
