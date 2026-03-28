@@ -7,15 +7,15 @@
     "internet_networks": [
         {
             "ssid": "S21",
-            "password": "12345678"
+            "password": "xxxxx"
         },
         {
             "ssid": "###?",
-            "password": "First0june22"
+            "password": "xxxxx"
         },
         {
             "ssid": "poohcorner.",
-            "password": "wm321895C"
+            "password": "xxxxx"
         },
 	
 	{
@@ -25,7 +25,7 @@
 
     ],
     "flashair_wifi_ssid": "flashair_b86b230428d2",
-    "flashair_wifi_password": "12345678",
+    "flashair_wifi_password": "xxxxxxxx",
     "flysto_email": "peter@gclac.com",
-    "flysto_password": "h02032"
+    "flysto_password": "xxxxxx"
 }
