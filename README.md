@@ -52,4 +52,4 @@ When you press the button, the system executes the following sequence:
 * **Nuke-on-Connect:** By deleting the WiFi profile before every connection, the system avoids the "Security Property Missing" error that often plagues Pi Zeros when switching between different types of networks (WPA2 vs WPA3).
 * **Headless Recovery:** If the internet is not found or the login fails, the Green and White LEDs will remain off, and the Blue LED will extinguish after the attempt, allowing you to try again without rebooting.
 * **Persistence:** Every successful step is logged in JSON databases. If the battery dies mid-upload, the Pi knows exactly where it left off and won't download or upload duplicate data.
-* ** Reliability:** Its importat to diable bluetooth on the Pi sine the radio chip uses the same antenna for wifi and bt. Timing conflicts and partial download may be a problem is BT is on.
+* ** Reliability:** It's importat to disable BT on the Pi since the radio chip uses the same chip and antenna for WiFi and BT. Timing conflicts and partial downloads may be a problem if BT is left switched on.
