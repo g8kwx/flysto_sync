@@ -1,3 +1,9 @@
+# REVERTING to what worked earlier!
+# Gemini version 39.4 - "Handshake Success Green LED" Build
+# Manual Trigger | Radio Reset | GPIO 11 fires on Verified Server Handshake
+# Fix 1: WiFi stability delay added after force_connect() before FlySto auth
+# Fix 2: Session re-authentication on 401 during upload with single retry
+
 # Gemini version 39.17 - "Handshake Success Green LED" Build
 # Manual Trigger | Radio Reset | GPIO 11 fires on Verified Server Handshake
 # Fix 1: WiFi stability delay added after force_connect() before FlySto auth
