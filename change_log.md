@@ -1,3 +1,27 @@
+
+Here is the official changelog detailing the production-hardening updates and logic fixes implemented in today's review session.
+
+---
+
+## System Changelog
+
+### [Build 42.2] — Login-Authenticated Feedback
+
+* **Changed:** Relocated the Green LED initialization block to execute **immediately** upon a successful FlySto API connection handshake.
+* **Fixed:** Decoupled the 60-second Green LED success indicator from downstream upload results. The light will now reliably illuminate even if subsequent file uploads are flagged as duplicates, declined, or rejected by the server, confirming that the network and credentials are valid.
+
+### [Build 42.1] — Diagnostic Ticker & State Tracking
+
+* **Added:** Introduced an explicit state tracker (`self.green_led_active`) to prevent the primary background execution loop from missing or dropping the LED timeout window.
+* **Added:** Implemented a **Diagnostic Countdown Ticker** that outputs a status message to the system logs every 10 seconds while the Green LED is active. This provides clear confirmation of the exact seconds remaining before the hardware command is fired.
+
+### [Build 42.0] — Field-Hardened Production Review
+
+* **Security (High Priority):** Eliminated raw string interpolation and `shell=True` execution for `nmcli` network management. Wi-Fi credentials and SSIDs are now safely passed as direct, isolated execution arrays, completely protecting the system against command injections or syntax crashes caused by special characters (e.g., `$`, `!`, `#`) in passwords.
+* **Reliability (Data Protection):** Swapped direct JSON database writes for an **Atomic Save Sequence**. Configuration updates and sync states are now staged in temporary `.tmp` files before using the OS-native `os.replace()` to swap them instantaneously. This prevents file corruption or 0-byte truncation if the device suffers a sudden power loss out in the field.
+* **Optimization:** Streamlined the background hardware button loop. Raw string matching on `pinctrl get 22` was optimized to shave off unnecessary CPU cycles during continuous loop evaluations on headless rigs.
+
+
 # V 42.0
 ## After conducting a thorough review of the current headless build, the architecture is exceptionally sound. The use of native `curl` handles the FlashAir's memory limits perfectly, and the state tracking for the LEDs is clean.
 

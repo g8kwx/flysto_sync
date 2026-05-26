@@ -1,19 +1,11 @@
-# After conducting a thorough review of the current headless build, the architecture is exceptionally sound. The use of native `curl` handles the FlashAir's memory limits perfectly, and the state tracking for the LEDs is clean.
+# To achieve this, the Green LED trigger has been moved up so it illuminates **immediately** upon a successful FlySto API authentication.
 
-# However, looking at the code from a production and field-reliability standpoint, there are three hidden vulnerabilities that could cause the system to fail in the wild.
+# The old restriction that required *every single file* to upload successfully before lighting the green LED has been removed. Now, as long as the server accepts your login credentials, the Green LED turns on and stays active for its 60-second duration, regardless of whether FlySto later flags a file as a duplicate, rejects it, or suffers a server hiccup.
 
-### Key Areas Improved in this Review
 
-# 1. **Shell Injection & Password Safety (High Priority)**
-# The previous script used `shell=True` and string concatenation to pass the Wi-Fi SSID and password to `nmcli`. If an internet router or FlashAir card uses special characters in its password (such as `$`, `!`, `&`, or `#`), the Linux shell will misinterpret them, causing syntax errors, connection failures, or silent crashes. The updated version executes `nmcli` as a safe, direct command array without opening a raw shell instance.
-# 2. **Atomic JSON Saves (Reliability Priority)**
-# Since this device operates as a portable hardware gateway, sudden power loss (unplugging a battery or turning off the rig) can occur at any time. The previous code wrote data directly to `local_sync.json`. If the Pi loses power mid-write, that file becomes corrupted or truncated to 0 bytes, erasing your entire sync history. The updated script writes to a temporary file first and uses the operating system's atomic `os.replace()` function to swap it instantly.
-# 3. **Optimized Process Churn**
-# The button loop checks `pinctrl get 22` every 100ms using a full shell execution. We can optimize the raw string matching so the Pi doesn't waste CPU cycles handling complex regex processing on a headless loop.
+### Updated Production Code
 
-### Final Production Code
-
-# Gemini version 42.0 - "Field-Hardened Production" Build
+# Gemini version 42.2 - "Login-Authenticated Feedback" Build
 import os, json, time, subprocess, requests, zipfile, io
 from pathlib import Path
 from requests.adapters import HTTPAdapter
@@ -89,7 +81,11 @@ class SyncOrchestrator:
         
         self.is_running = False
         self.manual_req = False
+        
+        # Diagnostic LED properties
         self.success_time = 0
+        self.green_led_active = False
+        self.last_countdown_log = 0
 
         # Hardware GPIO Setup via pinctrl
         os.system("sudo pinctrl set 22 ip pu") 
@@ -104,7 +100,6 @@ class SyncOrchestrator:
         return {}
 
     def _save_db(self, path, data):
-        # IMPROVEMENT: Atomic write sequence to guarantee zero data corruption on sudden power drops
         tmp_path = path.with_suffix('.tmp')
         try:
             tmp_path.write_text(json.dumps(data, indent=4))
@@ -116,8 +111,6 @@ class SyncOrchestrator:
     def force_connect(self, ssid, password, is_flashair=False):
         log("Force connecting to " + str(ssid) + "...")
         
-        # IMPROVEMENT: Use explicit arrays rather than shell=True string interpolation 
-        # This protects profiles if Wi-Fi passwords include special characters like $, !, or #
         subprocess.run(["sudo", "nmcli", "connection", "delete", ssid], capture_output=True)
         
         cmd = ["sudo", "nmcli", "device", "wifi", "connect", ssid, "password", password]
@@ -297,7 +290,14 @@ class SyncOrchestrator:
                             
                             client = FlyStoClient(self.config['flysto_email'], self.config['flysto_password'])
                             
+                            # MODIFICATION: Light up Green LED immediately if login passes, regardless of upload results
                             if client.is_authenticated:
+                                log("FlySto login authenticated. Illuminating Green LED (60s timeout).")
+                                os.system("sudo pinctrl set 11 op dh") 
+                                self.success_time = time.time()
+                                self.green_led_active = True
+                                self.last_countdown_log = time.time()
+
                                 for i, f in enumerate(pending):
                                     log("Uploading: " + str(f.name) + " to FlySto...")
                                     if client.upload_log(f):
@@ -306,12 +306,7 @@ class SyncOrchestrator:
                                         log("Successfully uploaded " + str(f.name))
                                         up_count += 1
                                     else:
-                                        log("File " + str(f.name) + " upload declined or broken by server.")
-                                
-                                if up_count > 0 and up_count == len(pending):
-                                    log("All new logs synchronized to FlySto. Illuminating Green LED.")
-                                    os.system("sudo pinctrl set 11 op dh") 
-                                    self.success_time = time.time() 
+                                        log("File " + str(f.name) + " upload denied or broken by server (Green LED stays active).")
                             else:
                                 log("FlySto API authentication rejected, check your email/password config.")
                             
@@ -328,6 +323,8 @@ class SyncOrchestrator:
                     log("FlashAir read verified successfully with 0 outstanding bytes to pull. Illuminating Green LED.")
                     os.system("sudo pinctrl set 11 op dh")
                     self.success_time = time.time()
+                    self.green_led_active = True
+                    self.last_countdown_log = time.time()
 
         except Exception as e:
             log("Sync Cycle Critical Error: " + str(e))
@@ -343,11 +340,17 @@ class SyncOrchestrator:
         log("System Ready. Waiting for Button Press...")
 
         while True:
-            # Handle green LED timeout
-            if self.success_time > 0 and (time.time() - self.success_time > 60):
-                os.system("sudo pinctrl set 11 op dl")
-                self.success_time = 0
-                log("Success timeout reached. Green LED reset to off.")
+            # Handle precise green LED timeout and diagnostics
+            if self.green_led_active:
+                elapsed = time.time() - self.success_time
+                if elapsed > 60:
+                    os.system("sudo pinctrl set 11 op dl")
+                    self.success_time = 0
+                    self.green_led_active = False
+                    log("Success timeout reached. Green LED command fired to turn OFF.")
+                elif time.time() - self.last_countdown_log > 10:
+                    log("Green LED active status: " + str(max(0, 60 - int(elapsed))) + "s remaining.")
+                    self.last_countdown_log = time.time()
 
             # Read GPIO state cleanly
             raw_btn = subprocess.getoutput("pinctrl get 22")
