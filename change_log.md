@@ -1,10 +1,29 @@
+# V 42.0
+## After conducting a thorough review of the current headless build, the architecture is exceptionally sound. The use of native `curl` handles the FlashAir's memory limits perfectly, and the state tracking for the LEDs is clean.
+
+# However, looking at the code from a production and field-reliability standpoint, there are three hidden vulnerabilities that could cause the system to fail in the wild.
+
+### Key Areas Improved in this Review
+
+# 1. **Shell Injection & Password Safety (High Priority)**
+# The previous script used `shell=True` and string concatenation to pass the Wi-Fi SSID and password to `nmcli`. If an internet router or FlashAir card uses special characters in its password (such as `$`, `!`, `&`, or `#`), the Linux shell will misinterpret them, causing syntax errors, connection failures, or silent crashes. The updated version executes `nmcli` as a safe, direct command array without opening a raw shell instance.
+# 2. **Atomic JSON Saves (Reliability Priority)**
+# Since this device operates as a portable hardware gateway, sudden power loss (unplugging a battery or turning off the rig) can occur at any time. The previous code wrote data directly to `local_sync.json`. If the Pi loses power mid-write, that file becomes corrupted or truncated to 0 bytes, erasing your entire sync history. The updated script writes to a temporary file first and uses the operating system's atomic `os.replace()` function to swap it instantly.
+# 3. **Optimized Process Churn**
+# The button loop checks `pinctrl get 22` every 100ms using a full shell execution. We can optimize the raw string matching so the Pi doesn't waste CPU cycles handling complex regex processing on a headless loop.
+
+### Final Production Code
+
+
+
+
 # V40.2
 # This feature adds a clear confirmation system. By introducing a tracking flag (`flashair_read_success`), the code can now distinguish between a failed connection and a clean, successful read that simply found no new data.
 
 ### Updated Green LED (GPIO 11) Logic Rules
 
-* **Condition 1 (New Uploads):** Fired if FlySto accepts your credentials **and** at least one new log file (`up_count > 0`) is successfully transmitted to the cloud.
-* **Condition 2 (No New Logs):** Fired if the native `curl` engine successfully connects to and parses the FlashAir directory loop, notices that your local mirror is already up to date, and finds 0 bytes of outstanding data to pull.
+# **Condition 1 (New Uploads):** Fired if FlySto accepts your credentials **and** at least one new log file (`up_count > 0`) is successfully transmitted to the cloud.
+# **Condition 2 (No New Logs):** Fired if the native `curl` engine successfully connects to and parses the FlashAir directory loop, notices that your local mirror is already up to date, and finds 0 bytes of outstanding data to pull.
 
 Both situations now latch the system clock via `self.success_time` to keep the Green LED illuminated for exactly 60 seconds before automatically turning off.
 
