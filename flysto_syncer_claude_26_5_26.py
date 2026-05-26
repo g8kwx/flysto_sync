@@ -1,11 +1,12 @@
-# Gemini version 39.9 - "Handshake Success Green LED" Build
+# Gemini version 39.10 - "Handshake Success Green LED" Build
 # Manual Trigger | Radio Reset | GPIO 11 fires on Verified Server Handshake
 # Fix 1: WiFi stability delay added after force_connect() before FlySto auth
 # Fix 2: Session re-authentication on 401 during upload with single retry
 # Fix 3: _wait_for_routing() only called in Phase 2 (internet needed)
 # Fix 5: FlashAir uses fixed IP — force_connect() skips DHCP wait for Phase 1
 # Fix 6: fa_session retry adapter removed; command.cgi timeout tightened to 10s
-#         with explicit error handling so a slow/absent card fails fast
+# Fix 7: force_connect() disconnects wlan0 and waits 2s before reconnecting
+#         to clear nmcli "connection activation enqueued" errors
 import os, json, time, subprocess, re, requests, zipfile, io
 from pathlib import Path
 from requests.adapters import HTTPAdapter
@@ -134,6 +135,10 @@ class SyncOrchestrator:
         log(f"Force connecting to {ssid}...")
         self.oled.update_status("WIFI", f"Join {ssid[:12]}")
         
+        # Disconnect and clear any pending activation before attempting a new connection
+        subprocess.run("sudo nmcli dev disconnect wlan0 > /dev/null 2>&1", shell=True)
+        time.sleep(2)
+
         # Clear old profile configurations to avoid the 802-11 security property bug
         subprocess.run(f"sudo nmcli connection delete '{ssid}' > /dev/null 2>&1", shell=True)
         
