@@ -1,19 +1,21 @@
-# Here is the complete, consolidated version of your script with both the **HTTP Connection** and **Network Routing** fixes integrated cleanly into Phase 1. python
-# Gemini version 39.5 - "Handshake Success Green LED" Build (Stabilized)
-# Manual Trigger | Radio Reset | GPIO 11 fires on Verified Server Handshake
-# Fix 1: WiFi stability delay added after force_connect() before FlySto auth
-# Fix 2: Session re-authentication on 401 during upload with single retry
-# Fix 3: Disabled FlashAir Keep-Alive to prevent SD card webserver lockups
-# Fix 4: Added active routing ping validation for FlashAir before API call
+# The reason the script is stalling right after harvesting and not moving to Phase 2 is a **silent scan omission**. In the previous version, the script used a single Wi-Fi scan snapshot taken at the very beginning of the cycle. After the Pi shifts its radio channel and latches onto the FlashAir access point, trying to match your internet networks against that stale, pre-connection scan string causes it to fail silently without reporting why.
+
+# To fix this, Phase 2 now handles transitions explicitly:
+# 1. **FlashAir Disconnection:** It drops the FlashAir connection to free up the wireless interface.
+# 2. **Fresh Radio Rescan:** It forces a fresh `nmcli device wifi rescan` to see your home/internet routers on their respective channels.
+# 3. **Verbose Guardrails:** Added explicit logs for every step of Phase 2. If it skips an upload, it will tell you exactly why (e.g., no pending files, home SSID out of range, or authentication failure).
+
+# Updated Gemini version 40.1 - "Fresh-Scan & Verbose FlySto Routing" Build
+
 import os, json, time, subprocess, re, requests, zipfile, io
 from pathlib import Path
 from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 
 def log(msg):
-    print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+    print("[" + time.strftime("%H:%M:%S") + "] " + str(msg), flush=True)
 
-# --- OLED Handler (Flicker-Free) ---
+# --- OLED Handler ---
 class OLEDController:
     def __init__(self):
         try:
@@ -31,11 +33,11 @@ class OLEDController:
 
     def update_status(self, mode, msg, progress=None, force=False):
         if not self.device: return
-        current_state = f"{mode}-{msg}-{progress}"
+        current_state = str(mode) + "-" + str(msg) + "-" + str(progress)
         if current_state != self.last_state or force:
             with self.canvas(self.device) as draw:
-                draw.text((0, -3), mode, fill="white")
-                draw.text((0, 15), msg[:18], fill="white")
+                draw.text((0, -3), str(mode), fill="white")
+                draw.text((0, 15), str(msg)[:18], fill="white")
                 if progress is not None:
                     draw.rectangle((0, 31, int(progress * 128), 31), outline="white", fill="white")
             self.last_state = current_state
@@ -53,16 +55,16 @@ class FlyStoClient:
         self.is_authenticated = self._authenticate()
 
     def _authenticate(self) -> bool:
-        log(f"Attempting FlySto login for {self._email}...")
+        log("Attempting FlySto login for " + str(self._email) + "...")
         try:
-            r = self._session.post(f"{self._base_url}/login", 
+            r = self._session.post(self._base_url + "/login", 
                 json={"email": self._email, "password": self._password}, 
                 headers={"Content-Type": "text/plain;charset=UTF-8"}, timeout=20)
             success = r.status_code == 204 and "USER_SESSION" in self._session.cookies
-            log(f"Login {'Successful' if success else 'Failed'}")
+            log("Login Successful" if success else "Login Failed")
             return success
         except Exception as e:
-            log(f"Login Error: {e}")
+            log("Login Error: " + str(e))
             return False
 
     def upload_log(self, file_path: Path) -> bool:
@@ -71,23 +73,22 @@ class FlyStoClient:
         with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
             z.write(file_path, arcname=file_path.name)
         try:
-            r = self._session.post(f"{self._base_url}/log-upload", params={"id": file_path.name}, 
+            r = self._session.post(self._base_url + "/log-upload", params={"id": file_path.name}, 
                 headers={"Content-Type": "application/zip"}, data=buf.getvalue(), timeout=60)
 
-            # FIX 2: Session cookie may have expired mid-loop; re-authenticate once and retry
             if r.status_code == 401:
                 log("Upload got 401 — session likely expired, re-authenticating...")
                 self.is_authenticated = self._authenticate()
                 if self.is_authenticated:
                     buf.seek(0)
-                    r = self._session.post(f"{self._base_url}/log-upload", params={"id": file_path.name},
+                    r = self._session.post(self._base_url + "/log-upload", params={"id": file_path.name},
                         headers={"Content-Type": "application/zip"}, data=buf.getvalue(), timeout=60)
                 else:
                     return False
 
             return r.status_code in [200, 201, 204]
         except Exception as e:
-            log(f"Upload failed for {file_path.name}: {e}")
+            log("Upload failed for " + str(file_path.name) + ": " + str(e))
             return False
 
 # --- Main System ---
@@ -111,16 +112,8 @@ class SyncOrchestrator:
         self.manual_req = False
         self.success_time = 0
 
-        self.fa_session = requests.Session()
-        # FIX 3: Force FlashAir connection drops instead of using Keep-Alive
-        self.fa_session.headers.update({"Connection": "close"})
-        
-        fa_retries = Retry(total=5, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
-        self.fa_session.mount('http://', HTTPAdapter(pool_connections=1, pool_maxsize=3, max_retries=fa_retries))
-
-        # GPIO Init: All outputs start LOW (dl)
         os.system("sudo pinctrl set 22 ip pu") 
-        for p in [9, 10, 11]: os.system(f"sudo pinctrl set {p} op dl")
+        for p in [9, 10, 11]: os.system("sudo pinctrl set " + str(p) + " op dl")
 
     def _load_db(self, path):
         if path.exists():
@@ -130,26 +123,38 @@ class SyncOrchestrator:
 
     def _save_db(self, path, data):
         path.write_text(json.dumps(data, indent=4))
-        os.system(f"sudo chmod 666 {path}")
+        os.system("sudo chmod 666 " + str(path))
 
-    def force_connect(self, ssid, password):
-        log(f"Force connecting to {ssid}...")
-        self.oled.update_status("WIFI", f"Join {ssid[:12]}")
+    def force_connect(self, ssid, password, is_flashair=False):
+        log("Force connecting to " + str(ssid) + "...")
+        self.oled.update_status("WIFI", "Join " + str(ssid[:12]))
         
-        # Clear old profile configurations to avoid the 802-11 security property bug
-        subprocess.run(f"sudo nmcli connection delete '{ssid}' > /dev/null 2>&1", shell=True)
+        subprocess.run("sudo nmcli connection delete '" + str(ssid) + "' > /dev/null 2>&1", shell=True)
         
-        cmd = f"sudo nmcli device wifi connect '{ssid}' password '{password}'"
+        cmd = "sudo nmcli device wifi connect '" + str(ssid) + "' password '" + str(password) + "'"
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=50)
         
         if "successfully activated" in result.stdout.lower():
-            log("WiFi connected. Waiting for IP...")
+            if is_flashair:
+                log("Optimizing wireless interface routing metrics for FlashAir...")
+                subprocess.run("sudo nmcli connection modify '" + str(ssid) + "' ipv4.route-metric 10 > /dev/null 2>&1", shell=True)
+                subprocess.run("sudo nmcli connection up '" + str(ssid) + "' > /dev/null 2>&1", shell=True)
+                os.system("sudo iw dev wlan0 set power_save off")
+            else:
+                log("Optimizing wireless interface routing metrics for Internet...")
+                subprocess.run("sudo nmcli connection modify '" + str(ssid) + "' ipv4.route-metric 20 > /dev/null 2>&1", shell=True)
+                subprocess.run("sudo nmcli connection up '" + str(ssid) + "' > /dev/null 2>&1", shell=True)
+
+            log("WiFi connected. Waiting for wlan0 IP assignment...")
             for _ in range(15):
-                if subprocess.getoutput("hostname -I").strip():
+                ip_check = subprocess.getoutput("ip -4 addr show wlan0 2>/dev/null")
+                if "inet " in ip_check:
+                    assigned_ip = ip_check.split("inet ")[1].split("/")[0].strip()
+                    log("wlan0 interface ready with IP: " + str(assigned_ip))
                     return True
                 time.sleep(1)
         else:
-            log(f"WiFi Connection failed: {result.stderr.strip()}")
+            log("WiFi Connection failed: " + str(result.stderr.strip()))
         return False
 
     def run_sync_cycle(self):
@@ -166,18 +171,18 @@ class SyncOrchestrator:
                      
         try:
             self.oled.update_status("SCAN", "Searching...")
-            scan = subprocess.getoutput("sudo nmcli device wifi list")
+            initial_scan = subprocess.getoutput("sudo nmcli device wifi list")
             
             # PHASE 1: FlashAir Harvesting
             fa_ssid = self.config['flashair_wifi_ssid']
-            if fa_ssid in scan:
-                if self.force_connect(fa_ssid, self.config['flashair_wifi_password']):
+            if fa_ssid in initial_scan:
+                log("!!! NOTICE: Ensure your mobile phone Wi-Fi is turned completely OFF to prevent card locking !!!")
+                if self.force_connect(fa_ssid, self.config['flashair_wifi_password'], is_flashair=True):
                     base = self.config['flashair_ip'].rstrip('/')
                     path = self.config['flashair_data_log_dir'].strip('/')
                     
-                    # FIX 4: Actively ping FlashAir target to confirm routing table is stable
                     fa_host = base.replace("http://", "").replace("https://", "").split(':')[0]
-                    log("Waiting for FlashAir routing to stabilise...")
+                    log("Waiting for FlashAir routing to stabilise at " + str(fa_host) + "...")
                     route_established = False
                     for _ in range(10):
                         result = subprocess.run(["ping", "-c", "1", "-W", "1", fa_host], capture_output=True)
@@ -188,38 +193,65 @@ class SyncOrchestrator:
                         time.sleep(1)
 
                     if route_established:
-                        r = self.fa_session.get(f"{base}/command.cgi?op=100&DIR=/{path}", timeout=15)
+                        target_url = base + "/command.cgi?op=100&DIR=/" + path
+                        log("Requesting file directory listing via OS native curl: " + str(target_url))
                         
-                        fa_files = {}
-                        for line in r.text.splitlines():
-                            parts = line.split(',')
-                            if len(parts) >= 3 and parts[1].lower().endswith('.csv'):
-                                filename = parts[1]
-                                try:
-                                    filesize = int(parts[2])
-                                    fa_files[filename] = filesize
-                                except ValueError:
-                                    continue
+                        curl_cmd = [
+                            "curl", 
+                            "--connect-timeout", "4", 
+                            "--max-time", "12", 
+                            "-A", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X)", 
+                            "-s", 
+                            target_url
+                        ]
+                        
+                        curl_res = subprocess.run(curl_cmd, capture_output=True, text=True)
+                        
+                        if curl_res.returncode == 0:
+                            fa_files = {}
+                            for line in curl_res.stdout.splitlines():
+                                parts = line.split(',')
+                                if len(parts) >= 3 and parts[1].lower().endswith('.csv'):
+                                    filename = parts[1]
+                                    try:
+                                        filesize = int(parts[2])
+                                        fa_files[filename] = filesize
+                                    except ValueError:
+                                        continue
 
-                        to_dl = []
-                        for fname, fsize in fa_files.items():
-                            if fsize == 0: 
-                                continue
+                            to_dl = []
+                            for fname, fsize in fa_files.items():
+                                if fsize == 0: 
+                                    continue
+                                
+                                record = self.local_done.get(fname)
+                                current_synced_size = record.get('size', 0) if isinstance(record, dict) else 0
+                                
+                                if record is None or fsize > current_synced_size:
+                                    to_dl.append((fname, fsize))
                             
-                            record = self.local_done.get(fname)
-                            current_synced_size = record.get('size', 0) if isinstance(record, dict) else 0
+                            log("Found " + str(len(to_dl)) + " new/modified log files to harvest.")
                             
-                            if record is None or fsize > current_synced_size:
-                                to_dl.append((fname, fsize))
-                        
-                        for i, (f, expected_size) in enumerate(to_dl):
-                            self.oled.update_status("DL", f, (i+1)/len(to_dl))
-                            try:
-                                dl = self.fa_session.get(f"{base}/{path}/{f}", timeout=45)
-                                if dl.status_code == 200:
-                                    actual_size = len(dl.content)
-                                    target = self.mirror_dir / f
-                                    target.write_bytes(dl.content)
+                            for i, (f, expected_size) in enumerate(to_dl):
+                                self.oled.update_status("DL", f, (i+1)/len(to_dl))
+                                dl_url = base + "/" + path + "/" + f
+                                target = self.mirror_dir / f
+                                
+                                log("Downloading: " + str(f) + " (" + str(expected_size) + " bytes)")
+                                dl_cmd = [
+                                    "curl", 
+                                    "--connect-timeout", "5", 
+                                    "--max-time", "60", 
+                                    "-A", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X)", 
+                                    "-s", 
+                                    "-o", str(target), 
+                                    dl_url
+                                ]
+                                
+                                dl_res = subprocess.run(dl_cmd)
+                                if dl_res.returncode == 0 and target.exists():
+                                    actual_size = target.stat().st_size
+                                    log("Successfully harvested " + str(f) + " [" + str(actual_size) + " bytes]")
                                     
                                     self.local_done[f] = {
                                         "timestamp": time.time(),
@@ -227,55 +259,91 @@ class SyncOrchestrator:
                                     }
                                     self._save_db(self.local_db_path, self.local_done)
                                     dl_count += 1
-                            except Exception as dl_err:
-                                log(f"Error downloading {f}: {dl_err}")
+                                else:
+                                    log("Curl file download failed for " + str(f) + " with exit code: " + str(dl_res.returncode))
+                        else:
+                            log("Curl directory request failed with OS exit code: " + str(curl_res.returncode))
                     else:
                         log("FlashAir routing could not be verified. Skipping download phase.")
+            else:
+                log("FlashAir SSID '" + str(fa_ssid) + "' not found in initial scan. Skipping download phase.")
 
             # PHASE 2: FlySto Upload
+            log("Explicitly disconnecting from FlashAir to prepare for internet routing...")
+            os.system("sudo nmcli dev disconnect wlan0 > /dev/null 2>&1")
+            time.sleep(2)
+
             on_disk = list(self.mirror_dir.glob('*.csv'))
             pending = [f for f in on_disk if f.name not in self.flysto_done]
             
+            log("Phase 2 Analysis: Found " + str(len(on_disk)) + " files total on disk, " + str(len(pending)) + " pending FlySto upload.")
+            
             if pending:
-                net = next((n for n in self.config['internet_networks'] if n['ssid'] in scan), None)
-                if net and self.force_connect(net['ssid'], net['password']):
-                    # FIX 1: Confirm internet routing is stable before attempting FlySto auth
-                    log("Waiting for network routing to stabilise...")
-                    for _ in range(10):
-                        result = subprocess.run(["ping", "-c", "1", "-W", "1", "8.8.8.8"], capture_output=True)
-                        if result.returncode == 0:
-                            log("Network routing confirmed.")
-                            break
-                        time.sleep(1)
+                log("Executing targeted radio rescan for internet networks...")
+                os.system("sudo nmcli device wifi rescan > /dev/null 2>&1")
+                time.sleep(3)
+                internet_scan = subprocess.getoutput("sudo nmcli device wifi list")
+                
+                net = None
+                for n in self.config['internet_networks']:
+                    if n['ssid'] in internet_scan:
+                        net = n
+                        break
+                
+                if net:
+                    log("Matched target internet network: '" + str(net['ssid']) + "'. Attempting handshake...")
+                    if self.force_connect(net['ssid'], net['password'], is_flashair=False):
+                        log("Waiting for cloud gateway routing to stabilise...")
+                        internet_routed = False
+                        for _ in range(10):
+                            result = subprocess.run(["ping", "-c", "1", "-W", "1", "8.8.8.8"], capture_output=True)
+                            if result.returncode == 0:
+                                log("Internet outbound path confirmed.")
+                                internet_routed = True
+                                break
+                            time.sleep(1)
 
-                    os.system("sudo pinctrl set 10 op dh") # White LED ON
-                    
-                    client = FlyStoClient(self.config['flysto_email'], self.config['flysto_password'])
-                    
-                    if client.is_authenticated:
-                        for i, f in enumerate(pending):
-                            self.oled.update_status("UP", f.name, (i+1)/len(pending))
-                            if client.upload_log(f):
-                                self.flysto_done[f.name] = time.time()
-                                self._save_db(self.flysto_db_path, self.flysto_done)
-                                up_count += 1
+                        if internet_routed:
+                            os.system("sudo pinctrl set 10 op dh") # White LED ON
+                            
+                            client = FlyStoClient(self.config['flysto_email'], self.config['flysto_password'])
+                            
+                            if client.is_authenticated:
+                                for i, f in enumerate(pending):
+                                    self.oled.update_status("UP", f.name, (i+1)/len(pending))
+                                    log("Uploading: " + str(f.name) + " to FlySto...")
+                                    if client.upload_log(f):
+                                        self.flysto_done[f.name] = time.time()
+                                        self._save_db(self.flysto_db_path, self.flysto_done)
+                                        log("Successfully uploaded " + str(f.name))
+                                        up_count += 1
+                                    else:
+                                        log("File " + str(f.name) + " upload declined or broken by server.")
+                                
+                                if up_count == len(pending):
+                                    log("All pending logs synchronized to FlySto successfully. Illuminating Green LED.")
+                                    os.system("sudo pinctrl set 11 op dh") 
+                                    self.success_time = time.time() 
                             else:
-                                log(f"File {f.name} processing finished (skipped or denied by server).")
-                        
-                        # GREEN TRIGGER: Authenticated and file verification loop successfully completed
-                        log("FlySto handshake and sync loop verified. Illuminating Green LED.")
-                        os.system("sudo pinctrl set 11 op dh") 
-                        self.success_time = time.time() 
-                    
-                    os.system("sudo pinctrl set 10 op dl") # White LED OFF
+                                log("FlySto API authentication rejected check your email/password config.")
+                            
+                            os.system("sudo pinctrl set 10 op dl") # White LED OFF
+                        else:
+                            log("Connected to Wi-Fi, but could not resolve external WAN ping to 8.8.8.8.")
+                    else:
+                        log("Failed to switch connection profile to internet network '" + str(net['ssid']) + "'.")
+                else:
+                    log("None of your configured 'internet_networks' were detected in the fresh Wi-Fi scan.")
+            else:
+                log("Database confirmation: Local mirror completely synchronized. Nothing to upload.")
 
         except Exception as e:
-            log(f"Sync Cycle Error: {e}")
+            log("Sync Cycle Critical Error: " + str(e))
         finally:
             self.is_running = False
             os.system("sudo pinctrl set 9 op dl") # Blue LED OFF
             os.system("sudo nmcli dev disconnect wlan0 > /dev/null 2>&1")
-            self.oled.update_status("COMPLETE", f"DL:{dl_count} UP:{up_count}", force=True)
+            self.oled.update_status("COMPLETE", "DL:" + str(dl_count) + " UP:" + str(up_count), force=True)
             time.sleep(5)
 
     def start(self):
@@ -286,7 +354,7 @@ class SyncOrchestrator:
             if self.success_time > 0 and (time.time() - self.success_time > 60):
                 os.system("sudo pinctrl set 11 op dl")
                 self.success_time = 0
-                self.oled.update_status("IDLE", f"Logs: {len(self.local_done)}", force=True)
+                self.oled.update_status("IDLE", "Logs: " + str(len(self.local_done)), force=True)
 
             raw_btn = subprocess.getoutput("pinctrl get 22")
             if "level=lo" in raw_btn or "| lo" in raw_btn:
@@ -306,7 +374,7 @@ class SyncOrchestrator:
                 self.run_sync_cycle()
             
             if not self.is_running:
-                self.oled.update_status("IDLE", f"Logs: {len(self.local_done)}")
+                self.oled.update_status("IDLE", "Logs: " + str(len(self.local_done)))
             time.sleep(0.1)
 
 if __name__ == "__main__":

@@ -1,3 +1,17 @@
+
+# The reason the script is stalling right after harvesting and not moving to Phase 2 is a **silent scan omission**. In the previous version, the script used a single Wi-Fi scan snapshot taken at the very beginning of the cycle. After the Pi shifts its radio channel and latches onto the FlashAir access point, trying to match your internet networks against that stale, pre-connection scan string causes it to fail silently without reporting why.
+
+# To fix this, Phase 2 now handles transitions explicitly:
+# 1. **FlashAir Disconnection:** It drops the FlashAir connection to free up the wireless interface.
+# 2. **Fresh Radio Rescan:** It forces a fresh `nmcli device wifi rescan` to see your home/internet routers on their respective channels.
+# 3. **Verbose Guardrails:** Added explicit logs for every step of Phase 2. If it skips an upload, it will tell you exactly why (e.g., no pending files, home SSID out of range, or authentication failure).
+
+# Updated Gemini version 40.1 - "Fresh-Scan & Verbose FlySto Routing" Build
+
+
+# Replacing the heavy Python connection pool with the native OS curl engine successfully bypassed the FlashAir's connection limits.
+
+
 # Going back to Gemini!
 # Gemini version 39.5 - "Handshake Success Green LED" Build (Stabilized)
 # Manual Trigger | Radio Reset | GPIO 11 fires on Verified Server Handshake
