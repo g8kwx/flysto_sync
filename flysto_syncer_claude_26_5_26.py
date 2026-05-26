@@ -1,7 +1,9 @@
-# Gemini version 39.5 - "Handshake Success Green LED" Build
+# Gemini version 39.6 - "Handshake Success Green LED" Build
 # Manual Trigger | Radio Reset | GPIO 11 fires on Verified Server Handshake
 # Fix 1: WiFi stability delay added after force_connect() before FlySto auth
 # Fix 2: Session re-authentication on 401 during upload with single retry
+# Fix 3: _wait_for_routing() now pings the correct host for each phase —
+#         FlashAir IP in Phase 1 (no internet), 8.8.8.8 in Phase 2
 import os, json, time, subprocess, re, requests, zipfile, io
 from pathlib import Path
 from requests.adapters import HTTPAdapter
@@ -146,21 +148,23 @@ class SyncOrchestrator:
             log(f"WiFi Connection failed: {result.stderr.strip()}")
         return False
 
-    def _wait_for_routing(self, host="8.8.8.8", retries=10, delay=1.0):
-        """FIX 1: Wait until the network stack has a working route before proceeding.
-        Having an IP is not enough — DNS and the default gateway can take a moment
-        to become active after nmcli reports a successful connection."""
-        log("Waiting for network routing to stabilise...")
+    def _wait_for_routing(self, host, retries=10, delay=1.0):
+        """FIX 1 / FIX 3: Ping a specific host to confirm the network is actually
+        reachable before proceeding. Called with the FlashAir IP in Phase 1 (local
+        network only, no internet) and with 8.8.8.8 in Phase 2 (internet required).
+        Using a fixed host of 8.8.8.8 for both phases caused Phase 1 to hang for
+        the full timeout because the FlashAir has no internet route."""
+        log(f"Waiting for {host} to become reachable...")
         for attempt in range(retries):
             result = subprocess.run(
                 ["ping", "-c", "1", "-W", "1", host],
                 capture_output=True
             )
             if result.returncode == 0:
-                log("Network routing confirmed.")
+                log(f"{host} reachable — network ready.")
                 return True
             time.sleep(delay)
-        log("Warning: routing did not stabilise within timeout.")
+        log(f"Warning: {host} did not respond within timeout, continuing anyway.")
         return False
 
     def run_sync_cycle(self):
@@ -183,6 +187,9 @@ class SyncOrchestrator:
             fa_ssid = self.config['flashair_wifi_ssid']
             if fa_ssid in scan:
                 if self.force_connect(fa_ssid, self.config['flashair_wifi_password']):
+                    # FIX 3: Ping the FlashAir itself — it has no internet so 8.8.8.8 would hang
+                    fa_host = self.config['flashair_ip'].rstrip('/').replace('http://', '').replace('https://', '')
+                    self._wait_for_routing(host=fa_host)
                     base = self.config['flashair_ip'].rstrip('/')
                     path = self.config['flashair_data_log_dir'].strip('/')
                     
@@ -235,8 +242,8 @@ class SyncOrchestrator:
             if pending:
                 net = next((n for n in self.config['internet_networks'] if n['ssid'] in scan), None)
                 if net and self.force_connect(net['ssid'], net['password']):
-                    # FIX 1: Confirm routing is stable before attempting FlySto auth
-                    self._wait_for_routing()
+                    # FIX 1: Confirm internet routing is stable before attempting FlySto auth
+                    self._wait_for_routing(host="8.8.8.8")
 
                     os.system("sudo pinctrl set 10 op dh") # White LED ON
                     
