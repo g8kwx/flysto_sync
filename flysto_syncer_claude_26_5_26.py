@@ -1,4 +1,4 @@
-# Gemini version 39.16 - "Handshake Success Green LED" Build
+# Gemini version 39.17 - "Handshake Success Green LED" Build
 # Manual Trigger | Radio Reset | GPIO 11 fires on Verified Server Handshake
 # Fix 1: WiFi stability delay added after force_connect() before FlySto auth
 # Fix 2: Session re-authentication on 401 during upload with single retry
@@ -209,7 +209,7 @@ class SyncOrchestrator:
                     
                     log("Requesting FlashAir file list...")
                     try:
-                        r = self.fa_session.get(f"{base}/command.cgi?op=100&DIR=/{path}", timeout=20)
+                        r = self.fa_session.get(f"{base}/command.cgi?op=100&DIR=/{path}", timeout=(5, 20))
                     except Exception as fa_err:
                         log(f"FlashAir command.cgi failed: {fa_err}")
                         r = None
@@ -240,7 +240,7 @@ class SyncOrchestrator:
                     for i, (f, expected_size) in enumerate(to_dl):
                         self.oled.update_status("DL", f, (i+1)/len(to_dl))
                         try:
-                            dl = self.fa_session.get(f"{base}/{path}/{f}", timeout=45)
+                            dl = self.fa_session.get(f"{base}/{path}/{f}", timeout=(5, 45))
                             if dl.status_code == 200:
                                 actual_size = len(dl.content)
                                 target = self.mirror_dir / f
