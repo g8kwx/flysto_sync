@@ -1,0 +1,25 @@
+    def force_connect(self, ssid, password, wait_for_ip=True):
+        log(f"Force connecting to {ssid}...")
+        self.oled.update_status("WIFI", f"Join {ssid[:12]}")
+
+        # Clear old profile configurations to avoid the 802-11 security property bug
+        subprocess.run(f"sudo nmcli connection delete '{ssid}' > /dev/null 2>&1", shell=True)
+
+        cmd = f"sudo nmcli device wifi connect '{ssid}' password '{password}'"
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=50)
+
+        if "successfully activated" in result.stdout.lower():
+            if not wait_for_ip:
+                # FlashAir has a fixed IP — no DHCP needed, but allow a few seconds
+                # for the card's HTTP server to become ready after WiFi association.
+                log("WiFi connected (fixed IP, waiting for HTTP server...).")
+                time.sleep(4)
+                return True
+            log("WiFi connected. Waiting for IP...")
+            for _ in range(15):
+                if subprocess.getoutput("hostname -I").strip():
+                    return True
+                time.sleep(1)
+        else:
+            log(f"WiFi Connection failed: {result.stderr.strip()}")
+        return False
