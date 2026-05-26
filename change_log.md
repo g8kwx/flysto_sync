@@ -1,5 +1,22 @@
 
 
+# Gemini version 39.8 - "Handshake Success Green LED" Build
+# Manual Trigger | Radio Reset | GPIO 11 fires on Verified Server Handshake
+# Fix 1: WiFi stability delay added after force_connect() before FlySto auth
+# Fix 2: Session re-authentication on 401 during upload with single retry
+# Fix 3: _wait_for_routing() only called in Phase 2 (internet needed) —
+#         Phase 1 (FlashAir) connects directly as before, no ping needed
+
+# Gemini version 39.7 - "Handshake Success Green LED" Build
+# Manual Trigger | Radio Reset | GPIO 11 fires on Verified Server Handshake
+# Fix 1: WiFi stability delay added after force_connect() before FlySto auth
+# Fix 2: Session re-authentication on 401 during upload with single retry
+# Fix 3: _wait_for_routing() now pings the correct host for each phase —
+#         FlashAir IP in Phase 1 (no internet), 8.8.8.8 in Phase 2
+# Fix 4: 2s pause after FlashAir ping (ICMP ready before HTTP); reduced
+#         fa_session retries from 5 to 2 to avoid long hangs on slow card
+
+
 # Gemini version 39.6 - "Handshake Success Green LED" Build
 # Manual Trigger | Radio Reset | GPIO 11 fires on Verified Server Handshake
 # Fix 1: WiFi stability delay added after force_connect() before FlySto auth

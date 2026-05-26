@@ -1,9 +1,9 @@
-# Gemini version 39.6 - "Handshake Success Green LED" Build
+# Gemini version 39.8 - "Handshake Success Green LED" Build
 # Manual Trigger | Radio Reset | GPIO 11 fires on Verified Server Handshake
 # Fix 1: WiFi stability delay added after force_connect() before FlySto auth
 # Fix 2: Session re-authentication on 401 during upload with single retry
-# Fix 3: _wait_for_routing() now pings the correct host for each phase —
-#         FlashAir IP in Phase 1 (no internet), 8.8.8.8 in Phase 2
+# Fix 3: _wait_for_routing() only called in Phase 2 (internet needed) —
+#         Phase 1 (FlashAir) connects directly as before, no ping needed
 import os, json, time, subprocess, re, requests, zipfile, io
 from pathlib import Path
 from requests.adapters import HTTPAdapter
@@ -111,7 +111,9 @@ class SyncOrchestrator:
         self.success_time = 0
 
         self.fa_session = requests.Session()
-        fa_retries = Retry(total=5, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
+        # FIX 4: Reduced retries for FlashAir — it's a local device, backoff retries
+        # cause long hangs if the card is slow to respond. Fail fast and move on.
+        fa_retries = Retry(total=2, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
         self.fa_session.mount('http://', HTTPAdapter(pool_connections=1, pool_maxsize=3, max_retries=fa_retries))
 
         # GPIO Init: All outputs start LOW (dl)
@@ -187,9 +189,6 @@ class SyncOrchestrator:
             fa_ssid = self.config['flashair_wifi_ssid']
             if fa_ssid in scan:
                 if self.force_connect(fa_ssid, self.config['flashair_wifi_password']):
-                    # FIX 3: Ping the FlashAir itself — it has no internet so 8.8.8.8 would hang
-                    fa_host = self.config['flashair_ip'].rstrip('/').replace('http://', '').replace('https://', '')
-                    self._wait_for_routing(host=fa_host)
                     base = self.config['flashair_ip'].rstrip('/')
                     path = self.config['flashair_data_log_dir'].strip('/')
                     
