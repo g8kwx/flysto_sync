@@ -4,6 +4,8 @@
 # Fix 2: Session re-authentication on 401 during upload with single retry
 # Fix 3: _wait_for_routing() only called in Phase 2 (internet needed)
 # Fix 5: FlashAir uses fixed IP — force_connect() skips DHCP wait for Phase 1
+# Fix 6: fa_session retry adapter removed; command.cgi timeout tightened to 10s
+#         with explicit error handling so a slow/absent card fails fast
 import os, json, time, subprocess, re, requests, zipfile, io
 from pathlib import Path
 from requests.adapters import HTTPAdapter
@@ -111,10 +113,8 @@ class SyncOrchestrator:
         self.success_time = 0
 
         self.fa_session = requests.Session()
-        # FIX 4: Reduced retries for FlashAir — it's a local device, backoff retries
-        # cause long hangs if the card is slow to respond. Fail fast and move on.
-        fa_retries = Retry(total=2, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
-        self.fa_session.mount('http://', HTTPAdapter(pool_connections=1, pool_maxsize=3, max_retries=fa_retries))
+        # FlashAir is a local fixed-IP device — no retry adapter, just a short timeout.
+        # Retries with backoff caused multi-minute hangs when the card was slow to respond.
 
         # GPIO Init: All outputs start LOW (dl)
         os.system("sudo pinctrl set 22 ip pu") 
@@ -196,18 +196,24 @@ class SyncOrchestrator:
                     base = self.config['flashair_ip'].rstrip('/')
                     path = self.config['flashair_data_log_dir'].strip('/')
                     
-                    r = self.fa_session.get(f"{base}/command.cgi?op=100&DIR=/{path}", timeout=15)
+                    log("Requesting FlashAir file list...")
+                    try:
+                        r = self.fa_session.get(f"{base}/command.cgi?op=100&DIR=/{path}", timeout=10)
+                    except Exception as fa_err:
+                        log(f"FlashAir command.cgi failed: {fa_err}")
+                        r = None
                     
                     fa_files = {}
-                    for line in r.text.splitlines():
-                        parts = line.split(',')
-                        if len(parts) >= 3 and parts[1].lower().endswith('.csv'):
-                            filename = parts[1]
-                            try:
-                                filesize = int(parts[2])
-                                fa_files[filename] = filesize
-                            except ValueError:
-                                continue
+                    if r is not None:
+                        for line in r.text.splitlines():
+                            parts = line.split(',')
+                            if len(parts) >= 3 and parts[1].lower().endswith('.csv'):
+                                filename = parts[1]
+                                try:
+                                    filesize = int(parts[2])
+                                    fa_files[filename] = filesize
+                                except ValueError:
+                                    continue
 
                     to_dl = []
                     for fname, fsize in fa_files.items():
