@@ -1,3 +1,6 @@
+# V42.3
+# Fixed LED on for min 60s even if nothing to upload.
+
 
 Here is the official changelog detailing the production-hardening updates and logic fixes implemented in today's review session.
 

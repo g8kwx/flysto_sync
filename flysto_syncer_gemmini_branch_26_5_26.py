@@ -1,11 +1,13 @@
-# To achieve this, the Green LED trigger has been moved up so it illuminates **immediately** upon a successful FlySto API authentication.
+# The reason the green LED was turning off early is a classic thread-blocking issue: because `run_sync_cycle()` runs synchronously, the main `while True:` loop in `start()` is completely frozen while the sync cycle is executing.
 
-# The old restriction that required *every single file* to upload successfully before lighting the green LED has been removed. Now, as long as the server accepts your login credentials, the Green LED turns on and stays active for its 60-second duration, regardless of whether FlySto later flags a file as a duplicate, rejects it, or suffers a server hiccup.
+# When the green LED was turned on *inside* the sync cycle, any downstream events—such as long file uploads, network teardowns, or the mandatory 5-second cleanup `time.sleep(5)`—were eating directly into that 60-second window. By the time control returned to the main loop to check the timer, most of the 60 seconds had already evaporated.
+
+# To solve this, this version implements a **Deferred Trigger Pattern**. The sync cycle now simply queues a flag (`self.trigger_green_led = True`). The actual hardware command and the 60-second countdown timestamp are fired **at the absolute end of the sync cycle execution**, ensuring you get a pristine, full 60 seconds of illumination starting from the exact moment the orchestrator finishes.
 
 
-### Updated Production Code
+### Updated Code with Deferred LED Triggering
 
-# Gemini version 42.2 - "Login-Authenticated Feedback" Build
+# Gemini version 42.3 - "Deferred Completion Trigger" Build
 import os, json, time, subprocess, requests, zipfile, io
 from pathlib import Path
 from requests.adapters import HTTPAdapter
@@ -86,6 +88,7 @@ class SyncOrchestrator:
         self.success_time = 0
         self.green_led_active = False
         self.last_countdown_log = 0
+        self.trigger_green_led = False
 
         # Hardware GPIO Setup via pinctrl
         os.system("sudo pinctrl set 22 ip pu") 
@@ -142,6 +145,7 @@ class SyncOrchestrator:
     def run_sync_cycle(self):
         if self.is_running: return
         self.is_running, self.manual_req = True, False
+        self.trigger_green_led = False
        
         os.system("sudo pinctrl set 9 op dh") # Blue Busy ON
         dl_count, up_count = 0, 0
@@ -290,13 +294,9 @@ class SyncOrchestrator:
                             
                             client = FlyStoClient(self.config['flysto_email'], self.config['flysto_password'])
                             
-                            # MODIFICATION: Light up Green LED immediately if login passes, regardless of upload results
                             if client.is_authenticated:
-                                log("FlySto login authenticated. Illuminating Green LED (60s timeout).")
-                                os.system("sudo pinctrl set 11 op dh") 
-                                self.success_time = time.time()
-                                self.green_led_active = True
-                                self.last_countdown_log = time.time()
+                                log("FlySto login authenticated. Queueing Green LED activation for cycle completion.")
+                                self.trigger_green_led = True
 
                                 for i, f in enumerate(pending):
                                     log("Uploading: " + str(f.name) + " to FlySto...")
@@ -306,7 +306,7 @@ class SyncOrchestrator:
                                         log("Successfully uploaded " + str(f.name))
                                         up_count += 1
                                     else:
-                                        log("File " + str(f.name) + " upload denied or broken by server (Green LED stays active).")
+                                        log("File " + str(f.name) + " upload denied or broken by server (Green LED will still trigger).")
                             else:
                                 log("FlySto API authentication rejected, check your email/password config.")
                             
@@ -320,11 +320,8 @@ class SyncOrchestrator:
             else:
                 log("Database confirmation: Local mirror completely synchronized. Nothing to upload.")
                 if flashair_read_success:
-                    log("FlashAir read verified successfully with 0 outstanding bytes to pull. Illuminating Green LED.")
-                    os.system("sudo pinctrl set 11 op dh")
-                    self.success_time = time.time()
-                    self.green_led_active = True
-                    self.last_countdown_log = time.time()
+                    log("FlashAir read verified successfully with 0 outstanding bytes to pull. Queueing Green LED activation.")
+                    self.trigger_green_led = True
 
         except Exception as e:
             log("Sync Cycle Critical Error: " + str(e))
@@ -334,6 +331,15 @@ class SyncOrchestrator:
             os.system("sudo nmcli dev disconnect wlan0 > /dev/null 2>&1")
             log("Cycle complete. Harvested: " + str(dl_count) + " | Uploaded: " + str(up_count))
             time.sleep(5)
+
+        # DEFERRED EXECUTION: Turn on the Green LED only AFTER the entire orchestrator has completed
+        if self.trigger_green_led:
+            log("Sync orchestrator completed. Illuminating Green LED for a clean 60 seconds.")
+            os.system("sudo pinctrl set 11 op dh")
+            self.success_time = time.time()
+            self.green_led_active = True
+            self.last_countdown_log = time.time()
+            self.trigger_green_led = False
 
     def start(self):
         btn_start = None
