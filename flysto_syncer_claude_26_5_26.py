@@ -1,12 +1,12 @@
-# Gemini version 39.10 - "Handshake Success Green LED" Build
+# Gemini version 39.11 - "Handshake Success Green LED" Build
 # Manual Trigger | Radio Reset | GPIO 11 fires on Verified Server Handshake
 # Fix 1: WiFi stability delay added after force_connect() before FlySto auth
 # Fix 2: Session re-authentication on 401 during upload with single retry
 # Fix 3: _wait_for_routing() only called in Phase 2 (internet needed)
 # Fix 5: FlashAir uses fixed IP — force_connect() skips DHCP wait for Phase 1
 # Fix 6: fa_session retry adapter removed; command.cgi timeout tightened to 10s
-# Fix 7: force_connect() disconnects wlan0 and waits 2s before reconnecting
-#         to clear nmcli "connection activation enqueued" errors
+# Fix 7: force_connect() disconnect→wait→delete→connect order fixed to prevent
+#         802-11-wireless-security.key-mgmt missing property error
 import os, json, time, subprocess, re, requests, zipfile, io
 from pathlib import Path
 from requests.adapters import HTTPAdapter
@@ -135,12 +135,13 @@ class SyncOrchestrator:
         log(f"Force connecting to {ssid}...")
         self.oled.update_status("WIFI", f"Join {ssid[:12]}")
         
-        # Disconnect and clear any pending activation before attempting a new connection
+        # Disconnect first, wait for it to settle, then delete the stale profile.
+        # Order matters — deleting while still connected leaves a corrupt profile
+        # that triggers the 802-11-wireless-security.key-mgmt missing property error.
         subprocess.run("sudo nmcli dev disconnect wlan0 > /dev/null 2>&1", shell=True)
-        time.sleep(2)
-
-        # Clear old profile configurations to avoid the 802-11 security property bug
+        time.sleep(3)
         subprocess.run(f"sudo nmcli connection delete '{ssid}' > /dev/null 2>&1", shell=True)
+        time.sleep(1)
         
         cmd = f"sudo nmcli device wifi connect '{ssid}' password '{password}'"
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=50)
