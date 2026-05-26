@@ -1,12 +1,12 @@
-# Gemini version 39.12 - "Handshake Success Green LED" Build
+# Gemini version 39.13 - "Handshake Success Green LED" Build
 # Manual Trigger | Radio Reset | GPIO 11 fires on Verified Server Handshake
 # Fix 1: WiFi stability delay added after force_connect() before FlySto auth
 # Fix 2: Session re-authentication on 401 during upload with single retry
 # Fix 3: _wait_for_routing() only called in Phase 2 (internet needed)
 # Fix 5: FlashAir uses fixed IP — force_connect() skips DHCP wait for Phase 1
 # Fix 6: fa_session retry adapter removed; command.cgi timeout tightened to 10s
-# Fix 7: force_connect() purges all profiles by UUID and removes NM connection
-#         files from disk before reconnecting — eliminates key-mgmt error
+# Fix 7: force_connect() reverted to original working logic; only addition
+#         is the wait_for_ip parameter for Phase 1 FlashAir connect
 import os, json, time, subprocess, re, requests, zipfile, io
 from pathlib import Path
 from requests.adapters import HTTPAdapter
@@ -135,29 +135,25 @@ class SyncOrchestrator:
         log(f"Force connecting to {ssid}...")
         self.oled.update_status("WIFI", f"Join {ssid[:12]}")
 
-        # Disconnect first and let NetworkManager settle
-        subprocess.run("sudo nmcli dev disconnect wlan0 > /dev/null 2>&1", shell=True)
-        time.sleep(3)
+        # Clear old profile configurations to avoid the 802-11 security property bug
+        subprocess.run(f"sudo nmcli connection delete '{ssid}' > /dev/null 2>&1", shell=True)
 
-        # Delete ALL saved profiles for this SSID by UUID to avoid the
-        # 802-11-wireless-security.key-mgmt missing property error.
-        # nmcli connection delete by name can silently fail if multiple
-        # profiles exist — iterating by UUID catches all of them.
-        result = subprocess.getoutput("sudo nmcli -t -f NAME,UUID connection show")
-        for line in result.splitlines():
-            parts = line.split(':')
-            if len(parts) >= 2 and parts[0].strip() == ssid:
-                uuid = parts[1].strip()
-                subprocess.run(f"sudo nmcli connection delete {uuid} > /dev/null 2>&1", shell=True)
-                log(f"Deleted profile UUID {uuid} for {ssid}")
+        cmd = f"sudo nmcli device wifi connect '{ssid}' password '{password}'"
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=50)
 
-        # Also remove any lingering NetworkManager connection files from disk
-        subprocess.run(
-            f"sudo find /etc/NetworkManager/system-connections/ -name '*{ssid}*' -delete > /dev/null 2>&1",
-            shell=True
-        )
-        subprocess.run("sudo nmcli connection reload > /dev/null 2>&1", shell=True)
-        time.sleep(1)
+        if "successfully activated" in result.stdout.lower():
+            if not wait_for_ip:
+                # FlashAir has a fixed IP — no DHCP needed, proceed immediately
+                log("WiFi connected (fixed IP, skipping DHCP wait).")
+                return True
+            log("WiFi connected. Waiting for IP...")
+            for _ in range(15):
+                if subprocess.getoutput("hostname -I").strip():
+                    return True
+                time.sleep(1)
+        else:
+            log(f"WiFi Connection failed: {result.stderr.strip()}")
+        return False
         
         cmd = f"sudo nmcli device wifi connect '{ssid}' password '{password}'"
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=50)
