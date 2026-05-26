@@ -1,12 +1,16 @@
-# The reason the script is stalling right after harvesting and not moving to Phase 2 is a **silent scan omission**. In the previous version, the script used a single Wi-Fi scan snapshot taken at the very beginning of the cycle. After the Pi shifts its radio channel and latches onto the FlashAir access point, trying to match your internet networks against that stale, pre-connection scan string causes it to fail silently without reporting why.
+# This feature adds a clear confirmation system. By introducing a tracking flag (`flashair_read_success`), the code can now distinguish between a failed connection and a clean, successful read that simply found no new data.
 
-# To fix this, Phase 2 now handles transitions explicitly:
-# 1. **FlashAir Disconnection:** It drops the FlashAir connection to free up the wireless interface.
-# 2. **Fresh Radio Rescan:** It forces a fresh `nmcli device wifi rescan` to see your home/internet routers on their respective channels.
-# 3. **Verbose Guardrails:** Added explicit logs for every step of Phase 2. If it skips an upload, it will tell you exactly why (e.g., no pending files, home SSID out of range, or authentication failure).
+### Updated Green LED (GPIO 11) Logic Rules
 
-# Updated Gemini version 40.1 - "Fresh-Scan & Verbose FlySto Routing" Build
+* **Condition 1 (New Uploads):** Fired if FlySto accepts your credentials **and** at least one new log file (`up_count > 0`) is successfully transmitted to the cloud.
+* **Condition 2 (No New Logs):** Fired if the native `curl` engine successfully connects to and parses the FlashAir directory loop, notices that your local mirror is already up to date, and finds 0 bytes of outstanding data to pull.
 
+Both situations now latch the system clock via `self.success_time` to keep the Green LED illuminated for exactly 60 seconds before automatically turning off.
+
+### Updated Code
+
+
+# Gemini version 40.2 - "Dual-Condition Green LED Validation" Build
 import os, json, time, subprocess, re, requests, zipfile, io
 from pathlib import Path
 from requests.adapters import HTTPAdapter
@@ -163,6 +167,7 @@ class SyncOrchestrator:
        
         os.system("sudo pinctrl set 9 op dh") # Blue Busy ON
         dl_count, up_count = 0, 0
+        flashair_read_success = False  # Track clean local directory execution
         
         os.system("sudo rfkill unblock wifi")
         os.system("sudo nmcli radio wifi on")
@@ -208,6 +213,7 @@ class SyncOrchestrator:
                         curl_res = subprocess.run(curl_cmd, capture_output=True, text=True)
                         
                         if curl_res.returncode == 0:
+                            flashair_read_success = True  # Verified card communication
                             fa_files = {}
                             for line in curl_res.stdout.splitlines():
                                 parts = line.split(',')
@@ -320,12 +326,13 @@ class SyncOrchestrator:
                                     else:
                                         log("File " + str(f.name) + " upload declined or broken by server.")
                                 
-                                if up_count == len(pending):
-                                    log("All pending logs synchronized to FlySto successfully. Illuminating Green LED.")
+                                # INTERVENTION 1: Green LED activates on valid handshake AND active log generation
+                                if up_count > 0 and up_count == len(pending):
+                                    log("All new logs synchronized to FlySto. Illuminating Green LED.")
                                     os.system("sudo pinctrl set 11 op dh") 
                                     self.success_time = time.time() 
                             else:
-                                log("FlySto API authentication rejected check your email/password config.")
+                                log("FlySto API authentication rejected, check your email/password config.")
                             
                             os.system("sudo pinctrl set 10 op dl") # White LED OFF
                         else:
@@ -336,6 +343,11 @@ class SyncOrchestrator:
                     log("None of your configured 'internet_networks' were detected in the fresh Wi-Fi scan.")
             else:
                 log("Database confirmation: Local mirror completely synchronized. Nothing to upload.")
+                # INTERVENTION 2: Green LED activates for 60s if directory was read cleanly but contained nothing new
+                if flashair_read_success:
+                    log("FlashAir read verified successfully with 0 outstanding bytes to pull. Illuminating Green LED.")
+                    os.system("sudo pinctrl set 11 op dh")
+                    self.success_time = time.time()
 
         except Exception as e:
             log("Sync Cycle Critical Error: " + str(e))

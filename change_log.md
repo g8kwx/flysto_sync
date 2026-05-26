@@ -1,3 +1,19 @@
+# V40.2
+# This feature adds a clear confirmation system. By introducing a tracking flag (`flashair_read_success`), the code can now distinguish between a failed connection and a clean, successful read that simply found no new data.
+
+### Updated Green LED (GPIO 11) Logic Rules
+
+* **Condition 1 (New Uploads):** Fired if FlySto accepts your credentials **and** at least one new log file (`up_count > 0`) is successfully transmitted to the cloud.
+* **Condition 2 (No New Logs):** Fired if the native `curl` engine successfully connects to and parses the FlashAir directory loop, notices that your local mirror is already up to date, and finds 0 bytes of outstanding data to pull.
+
+Both situations now latch the system clock via `self.success_time` to keep the Green LED illuminated for exactly 60 seconds before automatically turning off.
+
+### Updated Code
+
+
+# Gemini version 40.2 - "Dual-Condition Green LED Validation" Build
+
+
 
 # The reason the script is stalling right after harvesting and not moving to Phase 2 is a **silent scan omission**. In the previous version, the script used a single Wi-Fi scan snapshot taken at the very beginning of the cycle. After the Pi shifts its radio channel and latches onto the FlashAir access point, trying to match your internet networks against that stale, pre-connection scan string causes it to fail silently without reporting why.
 
