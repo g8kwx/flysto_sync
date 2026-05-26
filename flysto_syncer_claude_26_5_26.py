@@ -1,4 +1,4 @@
-# Gemini version 39.15 - "Handshake Success Green LED" Build
+# Gemini version 39.16 - "Handshake Success Green LED" Build
 # Manual Trigger | Radio Reset | GPIO 11 fires on Verified Server Handshake
 # Fix 1: WiFi stability delay added after force_connect() before FlySto auth
 # Fix 2: Session re-authentication on 401 during upload with single retry
@@ -154,7 +154,7 @@ class SyncOrchestrator:
                 # FlashAir has a fixed IP — no DHCP needed, but allow a few seconds
                 # for the card's HTTP server to become ready after WiFi association.
                 log("WiFi connected (fixed IP, waiting for HTTP server...).")
-                time.sleep(4)
+                time.sleep(12)
                 return True
             log("WiFi connected. Waiting for IP...")
             for _ in range(15):
@@ -209,7 +209,7 @@ class SyncOrchestrator:
                     
                     log("Requesting FlashAir file list...")
                     try:
-                        r = self.fa_session.get(f"{base}/command.cgi?op=100&DIR=/{path}", timeout=10)
+                        r = self.fa_session.get(f"{base}/command.cgi?op=100&DIR=/{path}", timeout=20)
                     except Exception as fa_err:
                         log(f"FlashAir command.cgi failed: {fa_err}")
                         r = None
