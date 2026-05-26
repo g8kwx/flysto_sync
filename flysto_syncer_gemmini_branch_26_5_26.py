@@ -1,3 +1,4 @@
+# Here is the complete, consolidated version of your script with both the **HTTP Connection** and **Network Routing** fixes integrated cleanly into Phase 1. python
 # Gemini version 39.5 - "Handshake Success Green LED" Build (Stabilized)
 # Manual Trigger | Radio Reset | GPIO 11 fires on Verified Server Handshake
 # Fix 1: WiFi stability delay added after force_connect() before FlySto auth
@@ -243,3 +244,70 @@ class SyncOrchestrator:
                     for _ in range(10):
                         result = subprocess.run(["ping", "-c", "1", "-W", "1", "8.8.8.8"], capture_output=True)
                         if result.returncode == 0:
+                            log("Network routing confirmed.")
+                            break
+                        time.sleep(1)
+
+                    os.system("sudo pinctrl set 10 op dh") # White LED ON
+                    
+                    client = FlyStoClient(self.config['flysto_email'], self.config['flysto_password'])
+                    
+                    if client.is_authenticated:
+                        for i, f in enumerate(pending):
+                            self.oled.update_status("UP", f.name, (i+1)/len(pending))
+                            if client.upload_log(f):
+                                self.flysto_done[f.name] = time.time()
+                                self._save_db(self.flysto_db_path, self.flysto_done)
+                                up_count += 1
+                            else:
+                                log(f"File {f.name} processing finished (skipped or denied by server).")
+                        
+                        # GREEN TRIGGER: Authenticated and file verification loop successfully completed
+                        log("FlySto handshake and sync loop verified. Illuminating Green LED.")
+                        os.system("sudo pinctrl set 11 op dh") 
+                        self.success_time = time.time() 
+                    
+                    os.system("sudo pinctrl set 10 op dl") # White LED OFF
+
+        except Exception as e:
+            log(f"Sync Cycle Error: {e}")
+        finally:
+            self.is_running = False
+            os.system("sudo pinctrl set 9 op dl") # Blue LED OFF
+            os.system("sudo nmcli dev disconnect wlan0 > /dev/null 2>&1")
+            self.oled.update_status("COMPLETE", f"DL:{dl_count} UP:{up_count}", force=True)
+            time.sleep(5)
+
+    def start(self):
+        btn_start = None
+        log("System Ready. Waiting for Button Press...")
+
+        while True:
+            if self.success_time > 0 and (time.time() - self.success_time > 60):
+                os.system("sudo pinctrl set 11 op dl")
+                self.success_time = 0
+                self.oled.update_status("IDLE", f"Logs: {len(self.local_done)}", force=True)
+
+            raw_btn = subprocess.getoutput("pinctrl get 22")
+            if "level=lo" in raw_btn or "| lo" in raw_btn:
+                if btn_start is None: btn_start = time.time()
+                if (time.time() - btn_start) > 3.0:
+                    self.oled.update_status("OFF", "SHUTDOWN...", force=True)
+                    os.system("sudo poweroff")
+                    return
+            else:
+                if btn_start is not None:
+                    if (time.time() - btn_start) < 3.0 and not self.is_running:
+                        log("Manual Sync Requested.")
+                        self.manual_req = True
+                    btn_start = None
+
+            if self.manual_req:
+                self.run_sync_cycle()
+            
+            if not self.is_running:
+                self.oled.update_status("IDLE", f"Logs: {len(self.local_done)}")
+            time.sleep(0.1)
+
+if __name__ == "__main__":
+    SyncOrchestrator().start()
