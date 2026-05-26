@@ -1,3 +1,11 @@
+# Going back to Gemini!
+# Gemini version 39.5 - "Handshake Success Green LED" Build (Stabilized)
+# Manual Trigger | Radio Reset | GPIO 11 fires on Verified Server Handshake
+# Fix 1: WiFi stability delay added after force_connect() before FlySto auth
+# Fix 2: Session re-authentication on 401 during upload with single retry
+# Fix 3: Disabled FlashAir Keep-Alive to prevent SD card webserver lockups
+# Fix 4: Added active routing ping validation for FlashAir before API call import os, json, time, subprocess, re, requests, zipfile, io
+
 # REVERTING to what worked earlier!
 # Gemini version 39.4 - "Handshake Success Green LED" Build
 # Manual Trigger | Radio Reset | GPIO 11 fires on Verified Server Handshake
