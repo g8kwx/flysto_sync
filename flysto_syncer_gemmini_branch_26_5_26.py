@@ -130,7 +130,7 @@ class SyncOrchestrator:
     def _save_db(self, path, data):
         path.write_text(json.dumps(data, indent=4))
         os.system(f"sudo chmod 666 {path}")
-
+    
     def force_connect(self, ssid, password, wait_for_ip=True):
         log(f"Force connecting to {ssid}...")
         self.oled.update_status("WIFI", f"Join {ssid[:12]}")
@@ -145,26 +145,18 @@ class SyncOrchestrator:
         cmd = f"sudo nmcli device wifi connect '{ssid}' password '{password}'"
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=50)
 
-        output = (result.stdout + result.stderr).lower()
+        # Log that the connection process for this specific SSID has started
+        log(f"Target AP '{ssid}' connection initiated. Proceeding to check IP status.")
 
-        # 2. Check if it activated immediately OR if it was enqueued successfully
-        if "successfully activated" in output or "activation was enqueued" in output:
-            if not wait_for_ip:
-            # FlashAir has a fixed IP — no DHCP needed, but allow a few seconds
-            # for the card's HTTP server to become ready after WiFi association.
-            log("WiFi connected or enqueued (fixed IP, waiting for HTTP server...).")
-            time.sleep(5) # Increased slightly to let an enqueued connection finish
-            return True
-            
-            log("WiFi connected/enqueued. Waiting for IP...")
-            # Loop for up to 20 seconds to give the enqueued connection time to get an IP
-            for _ in range(20):
-                 if subprocess.getoutput("hostname -I").strip():
-                    return True
+        # Loop for up to 20 seconds to give the enqueued connection time to get an IP
+        for _ in range(20):
+            if subprocess.getoutput("hostname -I").strip():
+                return True
             time.sleep(1)
         else:
             log(f"WiFi Connection failed: {result.stderr.strip()}")
         return False
+
 
 
     def _wait_for_routing(self, host, retries=10, delay=1.0):
