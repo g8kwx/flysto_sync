@@ -1,12 +1,12 @@
-# Gemini version 39.11 - "Handshake Success Green LED" Build
+# Gemini version 39.12 - "Handshake Success Green LED" Build
 # Manual Trigger | Radio Reset | GPIO 11 fires on Verified Server Handshake
 # Fix 1: WiFi stability delay added after force_connect() before FlySto auth
 # Fix 2: Session re-authentication on 401 during upload with single retry
 # Fix 3: _wait_for_routing() only called in Phase 2 (internet needed)
 # Fix 5: FlashAir uses fixed IP — force_connect() skips DHCP wait for Phase 1
 # Fix 6: fa_session retry adapter removed; command.cgi timeout tightened to 10s
-# Fix 7: force_connect() disconnect→wait→delete→connect order fixed to prevent
-#         802-11-wireless-security.key-mgmt missing property error
+# Fix 7: force_connect() purges all profiles by UUID and removes NM connection
+#         files from disk before reconnecting — eliminates key-mgmt error
 import os, json, time, subprocess, re, requests, zipfile, io
 from pathlib import Path
 from requests.adapters import HTTPAdapter
@@ -134,13 +134,29 @@ class SyncOrchestrator:
     def force_connect(self, ssid, password, wait_for_ip=True):
         log(f"Force connecting to {ssid}...")
         self.oled.update_status("WIFI", f"Join {ssid[:12]}")
-        
-        # Disconnect first, wait for it to settle, then delete the stale profile.
-        # Order matters — deleting while still connected leaves a corrupt profile
-        # that triggers the 802-11-wireless-security.key-mgmt missing property error.
+
+        # Disconnect first and let NetworkManager settle
         subprocess.run("sudo nmcli dev disconnect wlan0 > /dev/null 2>&1", shell=True)
         time.sleep(3)
-        subprocess.run(f"sudo nmcli connection delete '{ssid}' > /dev/null 2>&1", shell=True)
+
+        # Delete ALL saved profiles for this SSID by UUID to avoid the
+        # 802-11-wireless-security.key-mgmt missing property error.
+        # nmcli connection delete by name can silently fail if multiple
+        # profiles exist — iterating by UUID catches all of them.
+        result = subprocess.getoutput("sudo nmcli -t -f NAME,UUID connection show")
+        for line in result.splitlines():
+            parts = line.split(':')
+            if len(parts) >= 2 and parts[0].strip() == ssid:
+                uuid = parts[1].strip()
+                subprocess.run(f"sudo nmcli connection delete {uuid} > /dev/null 2>&1", shell=True)
+                log(f"Deleted profile UUID {uuid} for {ssid}")
+
+        # Also remove any lingering NetworkManager connection files from disk
+        subprocess.run(
+            f"sudo find /etc/NetworkManager/system-connections/ -name '*{ssid}*' -delete > /dev/null 2>&1",
+            shell=True
+        )
+        subprocess.run("sudo nmcli connection reload > /dev/null 2>&1", shell=True)
         time.sleep(1)
         
         cmd = f"sudo nmcli device wifi connect '{ssid}' password '{password}'"
