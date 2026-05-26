@@ -1,9 +1,9 @@
-# Gemini version 39.8 - "Handshake Success Green LED" Build
+# Gemini version 39.9 - "Handshake Success Green LED" Build
 # Manual Trigger | Radio Reset | GPIO 11 fires on Verified Server Handshake
 # Fix 1: WiFi stability delay added after force_connect() before FlySto auth
 # Fix 2: Session re-authentication on 401 during upload with single retry
-# Fix 3: _wait_for_routing() only called in Phase 2 (internet needed) —
-#         Phase 1 (FlashAir) connects directly as before, no ping needed
+# Fix 3: _wait_for_routing() only called in Phase 2 (internet needed)
+# Fix 5: FlashAir uses fixed IP — force_connect() skips DHCP wait for Phase 1
 import os, json, time, subprocess, re, requests, zipfile, io
 from pathlib import Path
 from requests.adapters import HTTPAdapter
@@ -130,7 +130,7 @@ class SyncOrchestrator:
         path.write_text(json.dumps(data, indent=4))
         os.system(f"sudo chmod 666 {path}")
 
-    def force_connect(self, ssid, password):
+    def force_connect(self, ssid, password, wait_for_ip=True):
         log(f"Force connecting to {ssid}...")
         self.oled.update_status("WIFI", f"Join {ssid[:12]}")
         
@@ -141,6 +141,10 @@ class SyncOrchestrator:
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=50)
         
         if "successfully activated" in result.stdout.lower():
+            if not wait_for_ip:
+                # FlashAir has a fixed IP — no DHCP needed, proceed immediately
+                log("WiFi connected (fixed IP, skipping DHCP wait).")
+                return True
             log("WiFi connected. Waiting for IP...")
             for _ in range(15):
                 if subprocess.getoutput("hostname -I").strip():
@@ -188,7 +192,7 @@ class SyncOrchestrator:
             # PHASE 1: FlashAir Harvesting
             fa_ssid = self.config['flashair_wifi_ssid']
             if fa_ssid in scan:
-                if self.force_connect(fa_ssid, self.config['flashair_wifi_password']):
+                if self.force_connect(fa_ssid, self.config['flashair_wifi_password'], wait_for_ip=False):
                     base = self.config['flashair_ip'].rstrip('/')
                     path = self.config['flashair_data_log_dir'].strip('/')
                     
