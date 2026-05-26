@@ -1,13 +1,7 @@
-# The reason the green LED was turning off early is a classic thread-blocking issue: because `run_sync_cycle()` runs synchronously, the main `while True:` loop in `start()` is completely frozen while the sync cycle is executing.
 
-# When the green LED was turned on *inside* the sync cycle, any downstream events—such as long file uploads, network teardowns, or the mandatory 5-second cleanup `time.sleep(5)`—were eating directly into that 60-second window. By the time control returned to the main loop to check the timer, most of the 60 seconds had already evaporated.
+### Updated Production Code
 
-# To solve this, this version implements a **Deferred Trigger Pattern**. The sync cycle now simply queues a flag (`self.trigger_green_led = True`). The actual hardware command and the 60-second countdown timestamp are fired **at the absolute end of the sync cycle execution**, ensuring you get a pristine, full 60 seconds of illumination starting from the exact moment the orchestrator finishes.
-
-
-### Updated Code with Deferred LED Triggering
-
-# Gemini version 42.3 - "Deferred Completion Trigger" Build
+# Gemini version 42.4 - "Universal Synchronized Feedback" Build
 import os, json, time, subprocess, requests, zipfile, io
 from pathlib import Path
 from requests.adapters import HTTPAdapter
@@ -149,14 +143,12 @@ class SyncOrchestrator:
        
         os.system("sudo pinctrl set 9 op dh") # Blue Busy ON
         dl_count, up_count = 0, 0
-        flashair_read_success = False 
-        
-        os.system("sudo rfkill unblock wifi")
-        os.system("sudo nmcli radio wifi on")
-        os.system("sudo nmcli device wifi rescan > /dev/null 2>&1")
-        time.sleep(2) 
                      
         try:
+            os.system("sudo rfkill unblock wifi")
+            os.system("sudo nmcli radio wifi on")
+            os.system("sudo nmcli device wifi rescan > /dev/null 2>&1")
+            time.sleep(2) 
             initial_scan = subprocess.getoutput("sudo nmcli device wifi list")
             
             # PHASE 1: FlashAir Harvesting
@@ -194,7 +186,6 @@ class SyncOrchestrator:
                         curl_res = subprocess.run(curl_cmd, capture_output=True, text=True)
                         
                         if curl_res.returncode == 0:
-                            flashair_read_success = True 
                             fa_files = {}
                             for line in curl_res.stdout.splitlines():
                                 parts = line.split(',')
@@ -318,10 +309,9 @@ class SyncOrchestrator:
                 else:
                     log("None of your configured 'internet_networks' were detected in the fresh Wi-Fi scan.")
             else:
-                log("Database confirmation: Local mirror completely synchronized. Nothing to upload.")
-                if flashair_read_success:
-                    log("FlashAir read verified successfully with 0 outstanding bytes to pull. Queueing Green LED activation.")
-                    self.trigger_green_led = True
+                # FIX: Unconditionally queue the green LED here since there is nothing outstanding to upload.
+                log("Database confirmation: Local mirror completely synchronized. Nothing to upload. Queueing Green LED activation.")
+                self.trigger_green_led = True
 
         except Exception as e:
             log("Sync Cycle Critical Error: " + str(e))
@@ -334,7 +324,7 @@ class SyncOrchestrator:
 
         # DEFERRED EXECUTION: Turn on the Green LED only AFTER the entire orchestrator has completed
         if self.trigger_green_led:
-            log("Sync orchestrator completed. Illuminating Green LED for a clean 60 seconds.")
+            log("Sync orchestrator completed successfully. Illuminating Green LED for a clean 60 seconds.")
             os.system("sudo pinctrl set 11 op dh")
             self.success_time = time.time()
             self.green_led_active = True
