@@ -1,4 +1,4 @@
-# Gemini version 39.13 - "Handshake Success Green LED" Build
+# Gemini version 39.14 - "Handshake Success Green LED" Build
 # Manual Trigger | Radio Reset | GPIO 11 fires on Verified Server Handshake
 # Fix 1: WiFi stability delay added after force_connect() before FlySto auth
 # Fix 2: Session re-authentication on 401 during upload with single retry
@@ -143,25 +143,10 @@ class SyncOrchestrator:
 
         if "successfully activated" in result.stdout.lower():
             if not wait_for_ip:
-                # FlashAir has a fixed IP — no DHCP needed, proceed immediately
-                log("WiFi connected (fixed IP, skipping DHCP wait).")
-                return True
-            log("WiFi connected. Waiting for IP...")
-            for _ in range(15):
-                if subprocess.getoutput("hostname -I").strip():
-                    return True
-                time.sleep(1)
-        else:
-            log(f"WiFi Connection failed: {result.stderr.strip()}")
-        return False
-        
-        cmd = f"sudo nmcli device wifi connect '{ssid}' password '{password}'"
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=50)
-        
-        if "successfully activated" in result.stdout.lower():
-            if not wait_for_ip:
-                # FlashAir has a fixed IP — no DHCP needed, proceed immediately
-                log("WiFi connected (fixed IP, skipping DHCP wait).")
+                # FlashAir has a fixed IP — no DHCP needed, but allow a few seconds
+                # for the card's HTTP server to become ready after WiFi association.
+                log("WiFi connected (fixed IP, waiting for HTTP server...).")
+                time.sleep(4)
                 return True
             log("WiFi connected. Waiting for IP...")
             for _ in range(15):
