@@ -1,3 +1,32 @@
+
+## v39.5 — 2026-05-26
+
+### Fixed
+
+- **WiFi routing race condition** — added `_wait_for_routing()` method that pings `8.8.8.8` (up to 10 attempts, 1s apart) after `force_connect()` returns `True`, before constructing `FlyStoClient`. An IP address being assigned does not guarantee the default gateway or DNS are active; this change ensures the network stack is fully ready before the FlySto login attempt is made.
+
+- **Session expiry mid-upload** — `upload_log()` now handles a `401` response by re-calling `_authenticate()` once to refresh the `USER_SESSION` cookie, then retrying the upload a single time. Previously, an expired session mid-loop would silently return `False` for every subsequent file with no recovery attempt. The bare `except` clause was also updated to log the specific error.
+
+---
+
+## v39.4 — "Handshake Success Green LED" Build
+
+Initial tracked version. Features:
+
+- Manual trigger via GPIO 22 button (hold 3s to shut down)
+- FlashAir Wi-Fi harvest of `.csv` log files with size-based delta detection
+- FlySto upload with ZIP compression per file
+- OLED status display (flicker-free, state-diffed)
+- Blue LED (GPIO 9) — busy indicator
+- White LED (GPIO 10) — upload in progress
+- Green LED (GPIO 11) — illuminates for 60s on verified FlySto handshake
+- Persistent local sync db (`local_sync.json`) and upload db (`flysto_uploads.json`)
+__________________
+
+
+
+
+
 # README: FlySto Sync Rig Evolution (Changelog v39.2 to v39.4)
 This document details the architectural updates and stabilization fixes implemented between **Gemini version 39.2** (Initial Baseline) and **Gemini version 39.4** (Current Build) of the automated FlashAir to FlySto synchronization engine.
 ## Executive Summary
