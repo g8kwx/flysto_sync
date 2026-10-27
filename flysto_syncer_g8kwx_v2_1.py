@@ -1,4 +1,10 @@
 # FlySto Sync v40.0 - "Robust Scan" Build
+
+#This file is from Claude was filename Flysto_syncer v2-1.py  but renamed to old name v1.py 
+# locally on the Rapi files sytem. So it boots ok without changing the boot code. 
+#My flysto pw changed just in this config (the one ongithunb has dummy pw)
+
+
 # Fixes applied vs v39.2:
 #   FIX 1: WiFi scan is now a live polled scan, not a stale snapshot.
 #           scan_for_ssid() triggers a fresh rescan and polls until the
